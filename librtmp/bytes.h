@@ -28,7 +28,20 @@
 
 #include <stdint.h>
 
-#ifdef _WIN32
+#ifdef __PPU__
+
+#ifndef __LITTLE_ENDIAN
+#define __LITTLE_ENDIAN        1234
+#endif
+
+#ifndef __BIG_ENDIAN
+#define __BIG_ENDIAN   4321
+#endif
+
+#define __BYTE_ORDER   __BIG_ENDIAN
+#define __FLOAT_WORD_ORDER __BYTE_ORDER
+
+#elif _WIN32
 /* Windows is little endian only */
 #define __LITTLE_ENDIAN 1234
 #define __BIG_ENDIAN    4321

@@ -157,6 +157,8 @@ RTMP_GetTime()
   return 0;
 #elif defined(_WIN32)
   return timeGetTime();
+#elif defined(__PPU__)
+  return 0;
 #else
   struct tms t;
   if (!clk_tck) clk_tck = sysconf(_SC_CLK_TCK);
@@ -936,6 +938,7 @@ RTMP_Connect0(RTMP *r, struct sockaddr * service)
     }
 
   /* set timeout */
+#ifndef __PPU__
   {
     SET_RCVTIMEO(tv, r->Link.timeout);
     if (setsockopt
@@ -947,6 +950,7 @@ RTMP_Connect0(RTMP *r, struct sockaddr * service)
   }
 
   setsockopt(r->m_sb.sb_socket, IPPROTO_TCP, TCP_NODELAY, (char *) &on, sizeof(on));
+#endif
 
   return TRUE;
 }
