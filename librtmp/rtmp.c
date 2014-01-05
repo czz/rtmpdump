@@ -2507,6 +2507,16 @@ static void hexenc(unsigned char *inbuf, int len, char *dst)
     *ptr = '\0';
 }
 
+static char *
+AValChr(AVal *av, char c)
+{
+  int i;
+  for (i = 0; i < av->av_len; i++)
+    if (av->av_val[i] == c)
+      return &av->av_val[i];
+  return NULL;
+}
+
 static int
 PublisherAuth(RTMP *r, AVal *description)
 {
@@ -2518,8 +2528,8 @@ PublisherAuth(RTMP *r, AVal *description)
 #define RESPONSE_LEN 32
 #define CHALLENGE2_LEN 16
 #define SALTED2_LEN (32+8+8+8)
-#define B64DIGEST_LEN	22	/* 16 byte digest => 22 b64 chars */
-#define B64INT_LEN	6	/* 4 byte int => 6 b64 chars */
+#define B64DIGEST_LEN	24	/* 16 byte digest => 22 b64 chars + 2 chars padding */
+#define B64INT_LEN	8	/* 4 byte int => 6 b64 chars + 2 chars padding */
 #define HEXHASH_LEN	(2*MD5_DIGEST_LENGTH)
   char response[RESPONSE_LEN];
   char challenge2[CHALLENGE2_LEN];
@@ -2602,7 +2612,6 @@ PublisherAuth(RTMP *r, AVal *description)
           b64enc(md5sum_val, MD5_DIGEST_LENGTH, salted2, SALTED2_LEN);
           RTMP_Log(RTMP_LOGDEBUG, "%s, b64(md5_1) = %s", __FUNCTION__, salted2);
 
-	/* FIXME: what byte order does this depend on? */
             challenge2_data = rand();
 
             b64enc((unsigned char *) &challenge2_data, sizeof(int), challenge2, CHALLENGE2_LEN);
@@ -2613,7 +2622,7 @@ PublisherAuth(RTMP *r, AVal *description)
             /* response = base64enc(md5(hash1 + opaque + challenge2)) */
 	  if (opaque.av_len)
 	    MD5_Update(&md5ctx, opaque.av_val, opaque.av_len);
-	  if (challenge.av_len)
+	  else if (challenge.av_len)
 	    MD5_Update(&md5ctx, challenge.av_val, challenge.av_len);
 	  MD5_Update(&md5ctx, challenge2, B64INT_LEN);
 	  MD5_Final(md5sum_val, &md5ctx);
@@ -2779,7 +2788,7 @@ PublisherAuth(RTMP *r, AVal *description)
           /* hash2 = hexenc(md5(method + ":/" + app + "/" + appInstance)) */
           /* Extract appname + appinstance without query parameters */
 	  apptmp = r->Link.app;
-	  ptr = strchr(apptmp.av_val, '?');
+	  ptr = AValChr(&apptmp, '?');
 	  if (ptr)
 	    apptmp.av_len = ptr - apptmp.av_val;
 
@@ -2787,6 +2796,8 @@ PublisherAuth(RTMP *r, AVal *description)
 	  MD5_Update(&md5ctx, method, sizeof(method)-1);
 	  MD5_Update(&md5ctx, ":/", 2);
 	  MD5_Update(&md5ctx, apptmp.av_val, apptmp.av_len);
+	  if (!AValChr(&apptmp, '/'))
+	    MD5_Update(&md5ctx, "/_definst_", sizeof("/_definst_") - 1);
 	  MD5_Final(md5sum_val, &md5ctx);
           RTMP_Log(RTMP_LOGDEBUG, "%s, md5(%s:/%.*s) =>", __FUNCTION__,
 	    method, apptmp.av_len, apptmp.av_val);
@@ -5002,6 +5013,7 @@ fail:
 	  memcpy(mybuf, flvHeader, sizeof(flvHeader));
 	  r->m_read.buf += sizeof(flvHeader);
 	  r->m_read.buflen -= sizeof(flvHeader);
+	  cnt += sizeof(flvHeader);
 
 	  while (r->m_read.timestamp == 0)
 	    {
@@ -5018,6 +5030,7 @@ fail:
 	      if (r->m_read.buf < mybuf || r->m_read.buf > end) {
 	      	mybuf = realloc(mybuf, cnt + nRead);
 		memcpy(mybuf+cnt, r->m_read.buf, nRead);
+		free(r->m_read.buf);
 		r->m_read.buf = mybuf+cnt+nRead;
 	        break;
 	      }
