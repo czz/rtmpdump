@@ -4406,6 +4406,11 @@ DecodeTEA(AVal *key, AVal *text)
     }
 
   text->av_len /= 2;
+
+#if defined(__BIG_ENDIAN__)
+  for(i = 0; i < n; i++)
+    v[i] = __builtin_bswap32(v[i]);
+#endif
   memcpy(text->av_val, out, text->av_len);
   free(out);
 }
