@@ -3100,7 +3100,43 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
         }
       else
         {
-          RTMP_Log(RTMP_LOGERROR, "rtmp server sent error");
+          double code = 0;
+          unsigned int parsedPort;
+          AMFObject obj2;
+          AMFObjectProperty p;
+          AVal redirect;
+          SAVC(ex);
+          SAVC(redirect);
+
+          AMFProp_GetObject(AMF_GetProp(&obj, NULL, 3), &obj2);
+          if (RTMP_FindFirstMatchingProperty(&obj2, &av_ex, &p))
+            {
+              AMFProp_GetObject(&p, &obj2);
+              if (RTMP_FindFirstMatchingProperty(&obj2, &av_code, &p))
+                code = AMFProp_GetNumber(&p);
+              if (code == 302 && RTMP_FindFirstMatchingProperty(&obj2, &av_redirect, &p))
+                {
+                  AMFProp_GetString(&p, &redirect);
+                  r->Link.redirected = TRUE;
+
+                  char *url = malloc(redirect.av_len + sizeof ("/playpath"));
+                  strncpy(url, redirect.av_val, redirect.av_len);
+                  url[redirect.av_len] = '\0';
+                  r->Link.tcUrl.av_val = url;
+                  r->Link.tcUrl.av_len = redirect.av_len;
+                  strcat(url, "/playpath");
+                  printf("%s\n", url);
+                  printf("old port=%d\n", r->Link.port);
+                  RTMP_ParseURL(url, &r->Link.protocol, &r->Link.hostname, &parsedPort, &r->Link.playpath0, &r->Link.app);
+                  printf("new port=%d\n", parsedPort);
+                  if(parsedPort)
+                    r->Link.port = parsedPort;
+                }
+            }
+          if (r->Link.redirected)
+            RTMP_Log(RTMP_LOGINFO, "rtmp server sent redirect");
+          else
+            RTMP_Log(RTMP_LOGERROR, "rtmp server sent error");
         }
       free(methodInvoked.av_val);
 #else
@@ -3109,8 +3145,18 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
     }
   else if (AVMATCH(&method, &av_close))
     {
-      RTMP_Log(RTMP_LOGERROR, "rtmp server requested close");
-      RTMP_Close(r);
+      if (r->Link.redirected)
+        {
+          RTMP_Log(RTMP_LOGINFO, "trying to connect with redirected url");
+          RTMP_Close(r);
+          r->Link.redirected = FALSE;
+          RTMP_Connect(r, NULL);
+        }
+      else
+        {
+          RTMP_Log(RTMP_LOGERROR, "rtmp server requested close");
+          RTMP_Close(r);
+        }
 #ifdef CRYPTO
       if ((r->Link.protocol & RTMP_FEATURE_WRITE) &&
               !(r->Link.pFlags & RTMP_PUB_CLEAN) &&
