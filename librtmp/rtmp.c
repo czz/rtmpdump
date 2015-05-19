@@ -32,6 +32,9 @@
 #include "rtmp_sys.h"
 #include "log.h"
 
+#include "networking/net.h"
+#include "misc/cancellable.h"
+
 #ifdef CRYPTO
 #ifdef USE_POLARSSL
 #include <polarssl/havege.h>
@@ -311,7 +314,7 @@ RTMP_TLS_FreeServerContext(void *ctx)
 }
 
 RTMP *
-RTMP_Alloc()
+RTMP_Alloc(void)
 {
   return calloc(1, sizeof(RTMP));
 }
@@ -319,19 +322,20 @@ RTMP_Alloc()
 void
 RTMP_Free(RTMP *r)
 {
+  cancellable_release(r->cancellable);
   free(r);
 }
 
 void
-RTMP_Init(RTMP *r)
+RTMP_Init(RTMP *r, struct cancellable *c)
 {
 #ifdef CRYPTO
   if (!RTMP_TLS_ctx)
     RTMP_TLS_Init();
 #endif
-
+  cancellable_release(r->cancellable);
   memset(r, 0, sizeof(RTMP));
-  r->m_sb.sb_socket = -1;
+  r->cancellable = cancellable_retain(c);
   r->m_inChunkSize = RTMP_DEFAULT_CHUNKSIZE;
   r->m_outChunkSize = RTMP_DEFAULT_CHUNKSIZE;
   r->m_nBufferMS = 30000;
@@ -359,13 +363,7 @@ RTMP_GetDuration(RTMP *r)
 int
 RTMP_IsConnected(RTMP *r)
 {
-  return r->m_sb.sb_socket != -1;
-}
-
-int
-RTMP_Socket(RTMP *r)
-{
-  return r->m_sb.sb_socket;
+  return r->m_sb.sb_tcp != NULL;
 }
 
 int
@@ -899,6 +897,7 @@ finish:
   return ret;
 }
 
+#if 0
 int
 RTMP_Connect0(RTMP *r, struct sockaddr * service, int sasize)
 {
@@ -954,7 +953,9 @@ RTMP_Connect0(RTMP *r, struct sockaddr * service, int sasize)
 
   return TRUE;
 }
+#endif
 
+#if 0
 int
 RTMP_TLS_Accept(RTMP *r, void *ctx)
 {
@@ -971,10 +972,12 @@ RTMP_TLS_Accept(RTMP *r, void *ctx)
   return FALSE;
 #endif
 }
+#endif
 
 int
 RTMP_Connect1(RTMP *r, RTMPPacket *cp)
 {
+#if 0
   if (r->Link.protocol & RTMP_FEATURE_SSL)
     {
 #if defined(CRYPTO) && !defined(NO_SSL)
@@ -993,6 +996,9 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
 
 #endif
     }
+#endif
+
+  
   if (r->Link.protocol & RTMP_FEATURE_HTTP)
     {
       r->m_msgCounter = 1;
@@ -1027,31 +1033,42 @@ RTMP_Connect1(RTMP *r, RTMPPacket *cp)
 }
 
 int
-RTMP_Connect(RTMP *r, RTMPPacket *cp)
+RTMP_Connect(RTMP *r, RTMPPacket *cp, char *errbuf, size_t errlen, int timeout)
 {
   struct sockaddr_in service;
-  if (!r->Link.hostname.av_len)
+  if (!r->Link.hostname.av_len) {
+    snprintf(errbuf, errlen, "No hostname in link");
     return FALSE;
+  }
+  
+  AVal *host = &r->Link.hostname;
 
-  memset(&service, 0, sizeof(struct sockaddr_in));
-  service.sin_family = AF_INET;
-
-  if (r->Link.socksport)
+  char *hostname;
+  int ret = TRUE;
+  if (host->av_val[host->av_len])
     {
-      /* Connect via SOCKS */
-      if (!add_addr_info(&service, &r->Link.sockshost, r->Link.socksport))
-	return FALSE;
+      hostname = malloc(host->av_len+1);
+      memcpy(hostname, host->av_val, host->av_len);
+      hostname[host->av_len] = '\0';
     }
   else
     {
-      /* Connect directly */
-      if (!add_addr_info(&service, &r->Link.hostname, r->Link.port))
-	return FALSE;
+      hostname = host->av_val;
     }
 
-  if (!RTMP_Connect0(r, (struct sockaddr *)&service, sizeof(service)))
-    return FALSE;
+  r->m_sb.sb_tcp =
+    tcp_connect(hostname, r->Link.port, errbuf, errlen,
+                5000,
+                r->Link.protocol & RTMP_FEATURE_SSL ? TCP_SSL : 0,
+                r->cancellable);
 
+  if (hostname != host->av_val)
+    free(hostname);
+  if(r->m_sb.sb_tcp == NULL) {
+    printf("Connection failed\n");
+    return FALSE;
+  }
+  
   r->m_bSendCounter = TRUE;
 
   return RTMP_Connect1(r, cp);
@@ -3150,7 +3167,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
           RTMP_Log(RTMP_LOGINFO, "trying to connect with redirected url");
           RTMP_Close(r);
           r->Link.redirected = FALSE;
-          RTMP_Connect(r, NULL);
+          RTMP_Connect(r, NULL, NULL, 0, 5000);
         }
       else
         {
@@ -3169,7 +3186,7 @@ HandleInvoke(RTMP *r, const char *body, unsigned int nBodySize)
               r->Link.pFlags |= RTMP_PUB_CLEAN;
           RTMP_Log(RTMP_LOGERROR, "authenticating publisher");
 
-          if (!RTMP_Connect(r, NULL) || !RTMP_ConnectStream(r, 0))
+          if (!RTMP_Connect(r, NULL, NULL, 0, 5000) || !RTMP_ConnectStream(r, 0))
               goto leave;
        }
 #endif
@@ -3624,7 +3641,7 @@ RTMP_ReadPacket(RTMP *r, RTMPPacket *packet)
   int nSize, hSize, nToRead, nChunk;
   int didAlloc = FALSE;
 
-  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%d", __FUNCTION__, r->m_sb.sb_socket);
+  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%p", __FUNCTION__, r->m_sb.sb_tcp);
 
   if (ReadN(r, (char *)hbuf, 1) == 0)
     {
@@ -3938,7 +3955,7 @@ RTMP_SendChunk(RTMP *r, RTMPChunk *chunk)
   int wrote;
   char hbuf[RTMP_MAX_HEADER_SIZE];
 
-  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%d, size=%d", __FUNCTION__, r->m_sb.sb_socket,
+  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%p, size=%d", __FUNCTION__, r->m_sb.sb_tcp,
       chunk->c_chunkSize);
   RTMP_LogHexString(RTMP_LOGDEBUG2, (uint8_t *)chunk->c_header, chunk->c_headerSize);
   if (chunk->c_chunkSize)
@@ -4080,7 +4097,7 @@ RTMP_SendPacket(RTMP *r, RTMPPacket *packet, int queue)
   buffer = packet->m_body;
   nChunkSize = r->m_outChunkSize;
 
-  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%d, size=%d", __FUNCTION__, r->m_sb.sb_socket,
+  RTMP_Log(RTMP_LOGDEBUG2, "%s: fd=%p, size=%d", __FUNCTION__, r->m_sb.sb_tcp,
       nSize);
   /* send all chunks in one HTTP request */
   if (r->Link.protocol & RTMP_FEATURE_HTTP)
@@ -4202,7 +4219,7 @@ RTMP_Close(RTMP *r)
     }
 
   r->m_stream_id = -1;
-  r->m_sb.sb_socket = -1;
+  r->m_sb.sb_tcp = NULL;
   r->m_nBWCheckCounter = 0;
   r->m_nBytesIn = 0;
   r->m_nBytesInSent = 0;
@@ -4312,16 +4329,8 @@ RTMPSockBuf_Fill(RTMPSockBuf *sb)
   while (1)
     {
       nBytes = sizeof(sb->sb_buf) - 1 - sb->sb_size - (sb->sb_start - sb->sb_buf);
-#if defined(CRYPTO) && !defined(NO_SSL)
-      if (sb->sb_ssl)
-	{
-	  nBytes = TLS_read(sb->sb_ssl, sb->sb_start + sb->sb_size, nBytes);
-	}
-      else
-#endif
-	{
-	  nBytes = recv(sb->sb_socket, sb->sb_start + sb->sb_size, nBytes, 0);
-	}
+
+      nBytes = tcp_read_data_nowait(sb->sb_tcp, sb->sb_start + sb->sb_size, nBytes);
       if (nBytes != -1)
 	{
 	  sb->sb_size += nBytes;
@@ -4355,32 +4364,20 @@ RTMPSockBuf_Send(RTMPSockBuf *sb, const char *buf, int len)
   fwrite(buf, 1, len, netstackdump);
 #endif
 
-#if defined(CRYPTO) && !defined(NO_SSL)
-  if (sb->sb_ssl)
-    {
-      rc = TLS_write(sb->sb_ssl, buf, len);
-    }
-  else
-#endif
-    {
-      rc = send(sb->sb_socket, buf, len, 0);
-    }
-  return rc;
+  rc = tcp_write_data(sb->sb_tcp, buf, len);
+
+  if(rc)
+    return -1;
+  return len;
 }
 
 int
 RTMPSockBuf_Close(RTMPSockBuf *sb)
 {
-#if defined(CRYPTO) && !defined(NO_SSL)
-  if (sb->sb_ssl)
-    {
-      TLS_shutdown(sb->sb_ssl);
-      TLS_close(sb->sb_ssl);
-      sb->sb_ssl = NULL;
-    }
-#endif
-  if (sb->sb_socket != -1)
-      return closesocket(sb->sb_socket);
+  if(sb->sb_tcp != NULL) {
+    tcp_close(sb->sb_tcp);
+    sb->sb_tcp = NULL;
+  }
   return 0;
 }
 

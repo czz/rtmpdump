@@ -30,6 +30,8 @@
 #include "log.h"
 #include "http.h"
 
+#include "networking/net.h"
+
 #ifdef CRYPTO
 #ifdef USE_POLARSSL
 #include <polarssl/sha2.h>
@@ -127,17 +129,9 @@ HTTP_get(struct HTTP_ctx *http, const char *url, HTTP_read_callback *cb)
       port = atoi(p1);
     }
 
-  sa.sin_addr.s_addr = inet_addr(host);
-  if (sa.sin_addr.s_addr == INADDR_NONE)
-    {
-      struct hostent *hp = gethostbyname(host);
-      if (!hp || !hp->h_addr)
-	return HTTPRES_LOST_CONNECTION;
-      sa.sin_addr = *(struct in_addr *)hp->h_addr;
-    }
-  sa.sin_port = htons(port);
-  sb.sb_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (sb.sb_socket == -1)
+
+  sb.sb_tcp = tcp_connect(host, port, NULL, 0, 5000, ssl ? TCP_SSL : 0, NULL);
+  if(sb.sb_tcp == NULL)
     return HTTPRES_LOST_CONNECTION;
   i =
     sprintf(sb.sb_buf,
@@ -147,46 +141,11 @@ HTTP_get(struct HTTP_ctx *http, const char *url, HTTP_read_callback *cb)
     i += sprintf(sb.sb_buf + i, "If-Modified-Since: %s\r\n", http->date);
   i += sprintf(sb.sb_buf + i, "\r\n");
 
-  if (connect
-      (sb.sb_socket, (struct sockaddr *)&sa, sizeof(struct sockaddr)) < 0)
-    {
-      ret = HTTPRES_LOST_CONNECTION;
-      goto leave;
-    }
-#ifdef CRYPTO
-  if (ssl)
-    {
-#ifdef NO_SSL
-      RTMP_Log(RTMP_LOGERROR, "%s, No SSL/TLS support", __FUNCTION__);
-      ret = HTTPRES_BAD_REQUEST;
-      goto leave;
-#else
-      TLS_client(RTMP_TLS_ctx, sb.sb_ssl);
-      TLS_setfd(sb.sb_ssl, sb.sb_socket);
-      if (TLS_connect(sb.sb_ssl) < 0)
-	{
-	  RTMP_Log(RTMP_LOGERROR, "%s, TLS_Connect failed", __FUNCTION__);
-	  ret = HTTPRES_LOST_CONNECTION;
-	  goto leave;
-	}
-#endif
-    }
-#endif
+
   RTMPSockBuf_Send(&sb, sb.sb_buf, i);
 
-#ifndef __PPU__
-  /* set timeout */
-#define HTTP_TIMEOUT	5
-  {
-    SET_RCVTIMEO(tv, HTTP_TIMEOUT);
-    if (setsockopt
-        (sb.sb_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&tv, sizeof(tv)))
-      {
-        RTMP_Log(RTMP_LOGERROR, "%s, Setting socket timeout to %ds failed!",
-	    __FUNCTION__, HTTP_TIMEOUT);
-      }
-  }
-#endif
+  tcp_set_read_timeout(sb.sb_tcp, 5000);
+
   sb.sb_size = 0;
   sb.sb_timedout = FALSE;
   if (RTMPSockBuf_Fill(&sb) < 1)

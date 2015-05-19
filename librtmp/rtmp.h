@@ -25,6 +25,8 @@
  *  http://www.gnu.org/copyleft/lgpl.html
  */
 
+struct cancellable;
+
 #if !defined(NO_CRYPTO) && !defined(CRYPTO)
 #define CRYPTO
 #endif
@@ -126,12 +128,13 @@ extern "C"
 
   typedef struct RTMPSockBuf
   {
-    int sb_socket;
+//    int sb_socket;
+    void *sb_tcp;
     int sb_size;		/* number of unprocessed bytes in buffer */
     char *sb_start;		/* pointer into sb_pBuffer of next byte to process */
     char sb_buf[RTMP_BUFFER_CACHE_SIZE];	/* data read from socket */
     int sb_timedout;
-    void *sb_ssl;
+//    void *sb_ssl;
   } RTMPSockBuf;
 
   void RTMPPacket_Reset(RTMPPacket *p);
@@ -285,6 +288,9 @@ extern "C"
     RTMPPacket m_write;
     RTMPSockBuf m_sb;
     RTMP_LNK Link;
+
+    struct cancellable *cancellable;
+
   } RTMP;
 
   int RTMP_ParseURL(const char *url, int *protocol, AVal *host,
@@ -314,9 +320,9 @@ extern "C"
 			int dStart,
 			int dStop, int bLiveStream, long int timeout);
 
-  int RTMP_Connect(RTMP *r, RTMPPacket *cp);
+ int RTMP_Connect(RTMP *r, RTMPPacket *cp, char *errbuf, size_t errlen,
+                  int timeout);
   struct sockaddr;
-  int RTMP_Connect0(RTMP *r, struct sockaddr *svc, int sasize);
   int RTMP_Connect1(RTMP *r, RTMPPacket *cp);
   int RTMP_Serve(RTMP *r);
   int RTMP_TLS_Accept(RTMP *r, void *ctx);
@@ -336,7 +342,7 @@ extern "C"
   int RTMP_GetNextMediaPacket(RTMP *r, RTMPPacket *packet);
   int RTMP_ClientPacket(RTMP *r, RTMPPacket *packet);
 
-  void RTMP_Init(RTMP *r);
+  void RTMP_Init(RTMP *r, struct cancellable *c);
   void RTMP_Close(RTMP *r);
   RTMP *RTMP_Alloc(void);
   void RTMP_Free(RTMP *r);
