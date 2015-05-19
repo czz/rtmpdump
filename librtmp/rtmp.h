@@ -322,6 +322,7 @@ extern "C"
 
  int RTMP_Connect(RTMP *r, RTMPPacket *cp, char *errbuf, size_t errlen,
                   int timeout);
+    void RTMP_SetReadTimeout(RTMP *r, int timeout_ms);
   struct sockaddr;
   int RTMP_Connect1(RTMP *r, RTMPPacket *cp);
   int RTMP_Serve(RTMP *r);

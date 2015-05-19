@@ -1064,15 +1064,21 @@ RTMP_Connect(RTMP *r, RTMPPacket *cp, char *errbuf, size_t errlen, int timeout)
 
   if (hostname != host->av_val)
     free(hostname);
-  if(r->m_sb.sb_tcp == NULL) {
-    printf("Connection failed\n");
+  if(r->m_sb.sb_tcp == NULL)
     return FALSE;
-  }
-  
+
   r->m_bSendCounter = TRUE;
 
   return RTMP_Connect1(r, cp);
 }
+
+void
+RTMP_SetReadTimeout(RTMP *r, int timeout_ms)
+{
+  if(r->m_sb.sb_tcp != NULL)
+    tcp_set_read_timeout(r->m_sb.sb_tcp, timeout_ms);
+}
+
 
 static int
 SocksNegotiate(RTMP *r)
