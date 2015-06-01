@@ -79,6 +79,7 @@ typedef struct tls_ctx {
 	havege_state hs;
 	ssl_session ssn;
 } tls_ctx;
+#if 0
 typedef struct tls_server_ctx {
 	havege_state *hs;
 	x509_cert cert;
@@ -86,6 +87,7 @@ typedef struct tls_server_ctx {
 	ssl_session ssn;
 	const char *dhm_P, *dhm_G;
 } tls_server_ctx;
+#endif
 
 #define TLS_CTX tls_ctx *
 #define TLS_client(ctx,s)	s = malloc(sizeof(ssl_context)); ssl_init(s);\

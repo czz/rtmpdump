@@ -255,6 +255,7 @@ RTMP_TLS_Init()
 #endif
 }
 
+#if 0
 void *
 RTMP_TLS_AllocServerContext(const char* cert, const char* key)
 {
@@ -312,6 +313,7 @@ RTMP_TLS_FreeServerContext(void *ctx)
 #endif
 #endif
 }
+#endif
 
 RTMP *
 RTMP_Alloc(void)
